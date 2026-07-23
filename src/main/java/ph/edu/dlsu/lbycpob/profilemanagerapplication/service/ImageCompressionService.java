@@ -49,3 +49,46 @@ public class ImageCompressionService {
             throw new IllegalStateException("Failed to encode image as WebP: " + e.getMessage(), e);
         }
     }
+    private BufferedImage resize(BufferedImage original) {
+        int width = original.getWidth();
+        int height = original.getHeight();
+
+        if (width <= MAX_DIMENSION && height <= MAX_DIMENSION) {
+            return original; // never upscale, matches the original pipeline's withoutEnlargement
+        }
+
+        double scale = Math.min((double) MAX_DIMENSION / width, (double) MAX_DIMENSION / height);
+        int newWidth = Math.max(1, (int) Math.round(width * scale));
+        int newHeight = Math.max(1, (int) Math.round(height * scale));
+
+        BufferedImage resized = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = resized.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(original, 0, 0, newWidth, newHeight, null);
+        } finally {
+            g.dispose();
+        }
+        return resized;
+    }
+
+    private byte[] encodeToWebp(BufferedImage image) throws IOException {
+        ImageWriter writer = ImageIO.getImageWritersByMIMEType("image/webp").next();
+        WebPWriteParam writeParam = new WebPWriteParam(writer.getLocale());
+        writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        writeParam.setCompressionType(writeParam.getCompressionTypes()[WebPWriteParam.LOSSY_COMPRESSION]);
+        writeParam.setCompressionQuality(WEBP_QUALITY);
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (MemoryCacheImageOutputStream output = new MemoryCacheImageOutputStream(baos)) {
+            writer.setOutput(output);
+            writer.write(null, new IIOImage(image, null, null), writeParam);
+        } finally {
+            writer.dispose();
+        }
+        return baos.toByteArray();
+    }
+}
+
