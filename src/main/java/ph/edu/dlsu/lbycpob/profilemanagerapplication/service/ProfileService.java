@@ -162,3 +162,31 @@ public class ProfileService {
 
         if (forwardExists && reverseExists) {
             throw new IllegalStateException("\"" + friend.getName() + "\" is already a friend.");
+        }
+        if (!forwardExists) {
+            friendRepository.save(Friend.builder().profileId(self.getId()).friendId(friend.getId()).build());
+        }
+        if (!reverseExists) {
+            friendRepository.save(Friend.builder().profileId(friend.getId()).friendId(self.getId()).build());
+        }
+        return friend.getName();
+    }
+
+    @Transactional
+    public String removeFriend(UUID profileId, String friendName) {
+        Profile friend = findByNameOrThrow(friendName);
+        friendRepository.deleteByProfileIdAndFriendId(profileId, friend.getId());
+        friendRepository.deleteByProfileIdAndFriendId(friend.getId(), profileId);
+        return friend.getName();
+    }
+
+    private Profile findByNameOrThrow(String friendName) {
+        String trimmed = friendName == null ? "" : friendName.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Friend name field is empty.");
+        }
+        return profileRepository.findByNameIgnoreCase(trimmed)
+                .orElseThrow(() -> new NoSuchElementException(
+                        "No profile named \"" + trimmed + "\" exists. Add that profile first."));
+    }
+}
