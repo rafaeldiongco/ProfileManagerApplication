@@ -55,3 +55,41 @@ public class ProfileService {
         }
         return matches.getFirst();
     }
+
+    @Transactional
+    public Profile createProfile(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Name field is empty. Please enter a name.");
+        }
+        if (profileRepository.findByNameIgnoreCase(trimmed).isPresent()) {
+            throw new IllegalStateException("A profile named \"" + trimmed + "\" already exists.");
+        }
+        return profileRepository.save(Profile.builder().name(trimmed).build());
+    }
+
+    @Transactional
+    public void deleteProfile(UUID id) {
+        if (!profileRepository.existsById(id)) {
+            throw new NoSuchElementException("Profile not found.");
+        }
+        profileRepository.deleteById(id); // ON DELETE CASCADE removes related friends rows
+    }
+
+    @Transactional
+    public void updateStatus(UUID id, String status) {
+        String trimmed = status == null ? "" : status.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Status field is empty.");
+        }
+        getProfile(id).setStatus(trimmed);
+    }
+
+    @Transactional
+    public void updateQuote(UUID id, String quote) {
+        String trimmed = quote == null ? "" : quote.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Quote field is empty.");
+        }
+        getProfile(id).setQuote(trimmed);
+    }
