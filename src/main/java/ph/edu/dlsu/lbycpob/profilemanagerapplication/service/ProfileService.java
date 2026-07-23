@@ -27,3 +27,31 @@ public class ProfileService {
         this.imageCompressionService = imageCompressionService;
         this.supabaseStorageService = supabaseStorageService;
     }
+
+    public List<Profile> listProfiles() {
+        return profileRepository.findAllByOrderByNameAsc();
+    }
+
+    public Profile getProfile(UUID id) {
+        return profileRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Profile not found."));
+    }
+
+    public List<Profile> getFriendsOf(UUID profileId) {
+        List<UUID> friendIds = friendRepository.findByProfileId(profileId).stream()
+                .map(Friend::getFriendId)
+                .toList();
+        return friendIds.isEmpty() ? List.of() : profileRepository.findAllById(friendIds);
+    }
+
+    public Profile lookupFirstMatch(String query) {
+        String trimmed = query == null ? "" : query.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Name field is empty. Please enter a name to search.");
+        }
+        List<Profile> matches = profileRepository.findByNameContainingIgnoreCaseOrderByNameAsc(trimmed);
+        if (matches.isEmpty()) {
+            throw new NoSuchElementException("No profile found matching \"" + trimmed + "\".");
+        }
+        return matches.getFirst();
+    }
