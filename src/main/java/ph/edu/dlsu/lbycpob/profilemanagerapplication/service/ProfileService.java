@@ -93,3 +93,31 @@ public class ProfileService {
         }
         getProfile(id).setQuote(trimmed);
     }
+
+    /** Mode B: paste a URL directly, same as the original saveUrlDirectly(). */
+    @Transactional
+    public void updatePictureUrl(UUID id, String pictureUrl) {
+        String trimmed = pictureUrl == null ? "" : pictureUrl.trim();
+        if (!trimmed.startsWith("https://")) {
+            throw new IllegalArgumentException("URL must start with https://");
+        }
+        getProfile(id).setPicture(trimmed);
+    }
+
+    /**
+     * Mode A: upload a file. Compresses to WebP, uploads to the Supabase
+     * Storage bucket at avatars/{profileId}.webp (upsert -- always the
+     * same path per profile, so re-uploading cleanly replaces the old
+     * image instead of accumulating orphaned files), then persists the
+     * returned public URL. Returns that URL so the caller can respond
+     * with it directly.
+     */
+    @Transactional
+    public String updatePictureFromUpload(UUID id, MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("No file was uploaded.");
+        }
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("The selected file is not an image.");
+        }
