@@ -1,4 +1,4 @@
-package ph.edu.dlsu.lbycpob.profilemanager.repository;
+package ph.edu.dlsu.lbycpob.profilemanagerapplication.repository;
 
 
 import org.springframework.data.jpa.repository.JpaRepository;
