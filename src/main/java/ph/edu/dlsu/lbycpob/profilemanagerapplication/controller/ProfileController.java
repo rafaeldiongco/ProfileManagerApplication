@@ -1,4 +1,4 @@
-package ph.edu.dlsu.lbycpob.profilemanager.controller;
+package ph.edu.dlsu.lbycpob.profilemanagerapplication.controller;
 
 
 import org.springframework.web.bind.annotation.*;
