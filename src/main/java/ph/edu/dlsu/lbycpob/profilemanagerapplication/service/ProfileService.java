@@ -1,6 +1,6 @@
 package ph.edu.dlsu.lbycpob.profilemanagerapplication.service;
 
-
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -11,6 +11,7 @@ import ph.edu.dlsu.lbycpob.profilemanagerapplication.repository.ProfileRepositor
 
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -18,18 +19,18 @@ public class ProfileService {
 
     private final ProfileRepository profileRepository;
     private final FriendRepository friendRepository;
-    private final ImageCompressionService imageCompressionService;
-    private final SupabaseStorageService supabaseStorageService;
+    private final PictureStorageService pictureStorageService;
 
-    public ProfileService(ProfileRepository profileRepository, FriendRepository friendRepository, ImageCompressionService imageCompressionService, SupabaseStorageService supabaseStorageService) {
+    public ProfileService(ProfileRepository profileRepository,
+                          FriendRepository friendRepository,
+                          PictureStorageService pictureStorageService) {
         this.profileRepository = profileRepository;
         this.friendRepository = friendRepository;
-        this.imageCompressionService = imageCompressionService;
-        this.supabaseStorageService = supabaseStorageService;
+        this.pictureStorageService = pictureStorageService;
     }
 
     public List<Profile> listProfiles() {
-        return profileRepository.findAllByOrderByNameAsc();
+        return profileRepository.findAll(Sort.by(Sort.Direction.ASC, "name"));
     }
 
     public Profile getProfile(UUID id) {
@@ -37,32 +38,30 @@ public class ProfileService {
                 .orElseThrow(() -> new NoSuchElementException("Profile not found."));
     }
 
-    public List<Profile> getFriendsOf(UUID profileId) {
-        List<UUID> friendIds = friendRepository.findByProfileId(profileId).stream()
-                .map(Friend::getFriendId)
-                .toList();
-        return friendIds.isEmpty() ? List.of() : profileRepository.findAllById(friendIds);
-    }
-
     public Profile lookupFirstMatch(String query) {
         String trimmed = query == null ? "" : query.trim();
         if (trimmed.isEmpty()) {
-            throw new IllegalArgumentException("Name field is empty. Please enter a name to search.");
+            throw new IllegalArgumentException("Search query must not be blank.");
         }
-        List<Profile> matches = profileRepository.findByNameContainingIgnoreCaseOrderByNameAsc(trimmed);
-        if (matches.isEmpty()) {
-            throw new NoSuchElementException("No profile found matching \"" + trimmed + "\".");
-        }
-        return matches.getFirst();
+        return profileRepository.findByNameContainingIgnoreCaseOrderByNameAsc(trimmed).stream()
+                .findFirst()
+                .orElseThrow(() -> new NoSuchElementException("No profile matches \"" + trimmed + "\"."));
+    }
+
+    public List<Profile> getFriendsOf(UUID id) {
+        return friendRepository.findByProfileId(id).stream()
+                .map(f -> profileRepository.findById(f.getFriendId()).orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Transactional
     public Profile createProfile(String name) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) {
-            throw new IllegalArgumentException("Name field is empty. Please enter a name.");
+            throw new IllegalArgumentException("Name must not be blank.");
         }
-        if (profileRepository.findByNameIgnoreCase(trimmed).isPresent()) {
+        if (profileRepository.existsByNameIgnoreCase(trimmed)) {
             throw new IllegalStateException("A profile named \"" + trimmed + "\" already exists.");
         }
         return profileRepository.save(Profile.builder().name(trimmed).build());
@@ -73,120 +72,96 @@ public class ProfileService {
         if (!profileRepository.existsById(id)) {
             throw new NoSuchElementException("Profile not found.");
         }
-        profileRepository.deleteById(id); // ON DELETE CASCADE removes related friends rows
+        // Friend rows on either side are removed by the DB's ON DELETE CASCADE.
+        profileRepository.deleteById(id);
     }
 
     @Transactional
     public void updateStatus(UUID id, String status) {
+        Profile profile = getProfile(id);
         String trimmed = status == null ? "" : status.trim();
         if (trimmed.isEmpty()) {
-            throw new IllegalArgumentException("Status field is empty.");
+            throw new IllegalArgumentException("Status must not be blank.");
         }
-        getProfile(id).setStatus(trimmed);
+        profile.setStatus(trimmed);
+        profileRepository.save(profile);
     }
 
     @Transactional
     public void updateQuote(UUID id, String quote) {
+        Profile profile = getProfile(id);
         String trimmed = quote == null ? "" : quote.trim();
         if (trimmed.isEmpty()) {
-            throw new IllegalArgumentException("Quote field is empty.");
+            throw new IllegalArgumentException("Quote must not be blank.");
         }
-        getProfile(id).setQuote(trimmed);
+        profile.setQuote(trimmed);
+        profileRepository.save(profile);
     }
 
-    /** Mode B: paste a URL directly, same as the original saveUrlDirectly(). */
     @Transactional
     public void updatePictureUrl(UUID id, String pictureUrl) {
         String trimmed = pictureUrl == null ? "" : pictureUrl.trim();
         if (!trimmed.startsWith("https://")) {
-            throw new IllegalArgumentException("URL must start with https://");
+            throw new IllegalArgumentException("Picture URL must start with https://");
         }
-        getProfile(id).setPicture(trimmed);
+        Profile profile = getProfile(id);
+        profile.setPicture(trimmed);
+        profileRepository.save(profile);
     }
 
-    /**
-     * Mode A: upload a file. Compresses to WebP, uploads to the Supabase
-     * Storage bucket at avatars/{profileId}.webp (upsert -- always the
-     * same path per profile, so re-uploading cleanly replaces the old
-     * image instead of accumulating orphaned files), then persists the
-     * returned public URL. Returns that URL so the caller can respond
-     * with it directly.
-     */
     @Transactional
     public String updatePictureFromUpload(UUID id, MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("No file was uploaded.");
         }
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new IllegalArgumentException("The selected file is not an image.");
-        }
-
         Profile profile = getProfile(id);
-
-        byte[] original;
-        try {
-            original = file.getBytes();
-        } catch (Exception e) {
-            throw new IllegalStateException("Could not read the uploaded file.");
-        }
-
-        byte[] webp = imageCompressionService.compressToWebp(original);
-        String path = "avatars/" + id + ".webp";
-        String publicUrl = supabaseStorageService.uploadAndGetPublicUrl(path, webp, "image/webp");
-
-        profile.setPicture(publicUrl);
-        return publicUrl;
+        String url = pictureStorageService.storeAvatar(id, file);
+        profile.setPicture(url);
+        profileRepository.save(profile);
+        return url;
     }
-    /**
-     * Adds a bidirectional friendship. Checks EACH direction independently
-     * rather than assuming they're always in sync -- if the two rows ever
-     * became asymmetric (e.g. leftover data from before this method was
-     * transactional, or any other partial write), a naive "check forward,
-     * then blindly insert both" approach hits the unique constraint on the
-     * direction that already exists and rolls back the whole transaction,
-     * including the direction that legitimately needed to be inserted.
-     */
 
     @Transactional
-    public String addFriend(UUID profileId, String friendName) {
-        Profile self = getProfile(profileId);
-        Profile friend = findByNameOrThrow(friendName);
+    public String addFriend(UUID id, String friendName) {
+        Profile profile = getProfile(id);
+        Profile friend = resolveByName(friendName);
 
-        if (friend.getId().equals(self.getId())) {
+        if (friend.getId().equals(profile.getId())) {
             throw new IllegalArgumentException("A profile cannot be friends with itself.");
         }
+        if (friendRepository.findByProfileIdAndFriendId(profile.getId(), friend.getId()).isPresent()) {
+            throw new IllegalStateException(friend.getName() + " is already a friend.");
+        }
 
-        boolean forwardExists = friendRepository.existsByProfileIdAndFriendId(self.getId(), friend.getId());
-        boolean reverseExists = friendRepository.existsByProfileIdAndFriendId(friend.getId(), self.getId());
+        // Directional rows on both sides, so the friendship shows up for either profile.
+        friendRepository.save(Friend.builder().profileId(profile.getId()).friendId(friend.getId()).build());
+        friendRepository.save(Friend.builder().profileId(friend.getId()).friendId(profile.getId()).build());
 
-        if (forwardExists && reverseExists) {
-            throw new IllegalStateException("\"" + friend.getName() + "\" is already a friend.");
-        }
-        if (!forwardExists) {
-            friendRepository.save(Friend.builder().profileId(self.getId()).friendId(friend.getId()).build());
-        }
-        if (!reverseExists) {
-            friendRepository.save(Friend.builder().profileId(friend.getId()).friendId(self.getId()).build());
-        }
         return friend.getName();
     }
 
     @Transactional
-    public String removeFriend(UUID profileId, String friendName) {
-        Profile friend = findByNameOrThrow(friendName);
-        friendRepository.deleteByProfileIdAndFriendId(profileId, friend.getId());
-        friendRepository.deleteByProfileIdAndFriendId(friend.getId(), profileId);
+    public String removeFriend(UUID id, String friendName) {
+        Profile profile = getProfile(id);
+        Profile friend = resolveByName(friendName);
+
+        boolean existed = friendRepository.findByProfileIdAndFriendId(profile.getId(), friend.getId()).isPresent();
+        if (!existed) {
+            throw new NoSuchElementException(friend.getName() + " is not currently a friend.");
+        }
+
+        friendRepository.deleteByProfileIdAndFriendId(profile.getId(), friend.getId());
+        friendRepository.deleteByProfileIdAndFriendId(friend.getId(), profile.getId());
+
         return friend.getName();
     }
 
-    private Profile findByNameOrThrow(String friendName) {
-        String trimmed = friendName == null ? "" : friendName.trim();
+    private Profile resolveByName(String name) {
+        String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) {
-            throw new IllegalArgumentException("Friend name field is empty.");
+            throw new IllegalArgumentException("Friend name must not be blank.");
         }
         return profileRepository.findByNameIgnoreCase(trimmed)
-                .orElseThrow(() -> new NoSuchElementException(
-                        "No profile named \"" + trimmed + "\" exists. Add that profile first."));
+                .orElseThrow(() -> new NoSuchElementException("No profile named \"" + trimmed + "\"."));
     }
 }
