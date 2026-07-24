@@ -1,8 +1,7 @@
 package ph.edu.dlsu.lbycpob.profilemanagerapplication.repository;
 
-
 import org.springframework.data.jpa.repository.JpaRepository;
-import ph.edu.dlsu.lbycpob.profilemanager.model.Profile;
+import ph.edu.dlsu.lbycpob.profilemanagerapplication.model.Profile;
 
 import java.util.List;
 import java.util.Optional;
@@ -10,10 +9,10 @@ import java.util.UUID;
 
 public interface ProfileRepository extends JpaRepository<Profile, UUID> {
 
-    List<Profile> findAllByOrderByNameAsc();
+    boolean existsByNameIgnoreCase(String name);
 
     Optional<Profile> findByNameIgnoreCase(String name);
 
-    // Replaces the original app.js .ilike("name", `%${query}%`).limit(1) search
+    /** Used by the /lookup endpoint -- returns every name containing the query, alphabetically. */
     List<Profile> findByNameContainingIgnoreCaseOrderByNameAsc(String query);
 }
