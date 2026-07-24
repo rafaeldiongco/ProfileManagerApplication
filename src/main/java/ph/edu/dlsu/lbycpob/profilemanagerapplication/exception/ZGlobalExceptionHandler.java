@@ -10,7 +10,7 @@ import ph.edu.dlsu.lbycpob.profilemanagerapplication.dto.Dtos.ApiError;
 import java.util.NoSuchElementException;
 
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+public class ZGlobalExceptionHandler {
 
     @ExceptionHandler(NoSuchElementException.class)
     public ResponseEntity<ApiError> handleNotFound(NoSuchElementException ex) {
